@@ -43,19 +43,19 @@ class PPO(nn.Module):
         super(PPO, self).__init__()
 
         # CNN
-        self.conv2D_0 = nn.Conv2d(1, 256, kernel_size=4, stride=2)  
-        self.conv2D_1 = nn.Conv2d(256, 128, kernel_size=3, stride=2)
-        self.conv2D_2 = nn.Conv2d(128, 64, kernel_size=3, stride=2)
-        self.conv2D_3 = nn.Conv2d(64, 32, kernel_size=3, stride=2)
-        self.conv2D_4 = nn.Conv2d(32, 16, kernel_size=3, stride=2, padding=1)
-        self.conv2D_5 = nn.Conv2d(16, 8, kernel_size=3, stride=2) 
+        self.conv2D_0 = nn.Conv2d(1, 8, kernel_size=4, stride=2)  
+        self.conv2D_1 = nn.Conv2d(8, 16, kernel_size=3, stride=2)
+        self.conv2D_2 = nn.Conv2d(16, 64, kernel_size=3, stride=2)
+        self.conv2D_3 = nn.Conv2d(64, 128, kernel_size=3, stride=2)
+        self.conv2D_4 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
+
 
         # Actor
-        self.action_mean = nn.Linear(8, output_size)
-        self.action_std = nn.Linear(8, output_size)
+        self.action_mean = nn.Linear(1024, output_size)
+        self.action_std = nn.Linear(1024, output_size)
 
         # Critic
-        self.critic_output = nn.Linear(8, 1)
+        self.critic_output = nn.Linear(1024, 1)
 
         self.relu = nn.ReLU()
         self.softplus = nn.Softplus()
@@ -63,7 +63,7 @@ class PPO(nn.Module):
 
         # Orthogonal weights initialization
         for layer in [self.conv2D_0, self.conv2D_1, self.conv2D_2, self.conv2D_3,\
-                      self.conv2D_4, self.conv2D_5, self.action_mean, self.action_std, self.critic_output]:
+                      self.conv2D_4, self.action_mean, self.action_std, self.critic_output]:
             torch.nn.init.orthogonal_(layer.weight)
             torch.nn.init.zeros_(layer.bias)
     
@@ -78,7 +78,7 @@ class PPO(nn.Module):
         x = self.relu(self.conv2D_2(x))
         x = self.relu(self.conv2D_3(x))
         x = self.relu(self.conv2D_4(x))
-        x = self.relu(self.conv2D_5(x))
+        # x = self.relu(self.conv2D_5(x))
 
         x = x.view(x.shape[0], -1)
 
@@ -103,7 +103,7 @@ class Policy(nn.Module):
         self.device = device
 
         # PPO Hyperparameters
-        self.gamma = 0.98
+        self.gamma = 0.95
         self.epsilon = 0.2
         self.value_factor = 0.5
         self.entropy_factor = 0.005
@@ -223,7 +223,7 @@ class Policy(nn.Module):
         Computes the training phase
         """
         # Adam optimizer
-        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0015)
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.001)
 
         scores = []
         best_score = -float('inf')
@@ -250,7 +250,7 @@ class Policy(nn.Module):
                 policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
 
                 loss = 2*policy_loss + self.value_factor*value_loss + self.entropy_factor*entropy_loss
-                print(f"Loss at step n°{n_step+1}: {loss:.5f}")
+                print(f"Loss at step n°{n_step+1}: {loss:.4f}")
 
                 loss.backward() # Backpropagation
 
