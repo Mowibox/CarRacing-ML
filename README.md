@@ -9,9 +9,9 @@ Control of the car via Reinforcement learning was achieved based on the PPO algo
 
 Run inside the repository:
 
-    python run.py [options]
+    python main.py [options]
 
-        usage: run.py [-t] [-e] [--render]
+        usage: main.py [-t] [-e] [--render]
 
         optional arguments:
           -t, --train     Train the model
@@ -28,6 +28,6 @@ At the en of the training phase, a model named 'modelPPO.pt' will be created.
 
 To try out the model with environment display:
 ```
-python run.py --evaluate --render
+python main.py --evaluate --render
 ``` 
 
