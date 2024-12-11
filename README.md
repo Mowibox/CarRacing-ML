@@ -24,7 +24,7 @@ To train a new model:
 ```
 python run.py --train
 ```
-At the en of the training phase, a model named 'modelPPO.pt' will be created.
+At the end of the training phase, a model named 'modelPPO.pt' will be created.
 
 To try out the model with environment display:
 ```
