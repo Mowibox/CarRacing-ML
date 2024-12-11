@@ -1,3 +1,13 @@
+"""
+    @file        ppo.py
+    @author      Mowibox (Ousmane THIONGANE)
+    @brief       PPO algorithm implementation 
+    @version     1.0
+    @date        2024-12-11
+    
+"""
+
+# Imports 
 import torch
 import numpy as np
 import torch.nn as nn
@@ -167,8 +177,8 @@ class Policy(nn.Module):
                 discount[i] = rewards[i] + self.gamma*discount
                 discountedRewards[i] = discount
 
-            return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
-                    self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
+            return self.to(states).mean(dim=3).unsqueeze(dim=1), self.to(actions), \
+                    self.to(discountedRewards).reshape(-1, 1), self.to(log_actions), total_reward
         
 
     def forward(self, x: np.ndarray) -> tuple:
@@ -176,8 +186,8 @@ class Policy(nn.Module):
         Computes the forward pass 
         @param x: The current state
         """
-        x /= 225.0
-        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        x /= 225.0 # Data normalization
+        x = self.to(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
 
         mean, actions, log_actions, _, _ = self.ppoAgent(x)
 
@@ -193,23 +203,70 @@ class Policy(nn.Module):
 
         @param state: The current state
         """
-        x /= 225.0
-        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        state /= 225.0 # Data normalization
+        state = self.to(state).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
         
-        _, actions, _, _, _ = self.ppoAgent(x)
-        
+        _, actions, _, _, _ = self.ppoAgent(state)
+
         return actions.detach().cpu().numpy()
 
     def train(self):
+        """
+        Computes the training phase
+        """
+        # Adam optimizer
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.001)
+
+        scores = []
+
+        for iteration in range(self.episodes):
+            with torch.no_grad():
+                self.agent.eval()
+                states, actions, returns, log_actions, episode_score = self.rollout(it=iteration)
+
+            scores.append(episode_score)
+            print(f"Score at episode {len(scores)}: {scores[-1]}")
+
+            _, _, _, _,values = self.ppoAgent(states)
+
+            advantages = returns - values.detach()
+            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
+
+            self.agent.train() # Update
+
+            for n_step in range(self.episodes):
+                optimizer.zero_grad()
+                policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
+
+                loss = 2*policy_loss + self.value_factor*value_loss + self.entropy_factor*entropy_loss
+                print(f"Loss at step n°{n_step}: {loss:.5f}")
+
+                loss.backward() # Backpropagation
+
+                torch.nn.utils.clip_grad_norm_(self.agent.parameters(), 0.5)
+
+                optimizer.step()
+                
         return
 
     def save(self):
-        torch.save(self.state_dict(), 'model.pt')
+        """
+        Saves the model
+        """
+        torch.save(self.state_dict(), 'modelPPO.pt')
 
     def load(self):
-        self.load_state_dict(torch.load('model.pt', map_location=self.device))
+        """
+        Loads the model
+        """
+        self.load_state_dict(torch.load('modelPPO.pt', map_location=self.device))
 
-    def to(self, device):
+    def to(self, device: torch.device) -> nn.Module:
+        """
+        Moves the model to the device
+
+        @param device: The target device
+        """
         ret = super().to(device)
         ret.device = device
         return ret
