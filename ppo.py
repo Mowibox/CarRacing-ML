@@ -19,10 +19,14 @@ class Gaussian(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, mean_actions, std_actions, old_actions):
-        print(f"mean_actions: {mean_actions}")
-        print(f"std_actions: {std_actions}")
+    def forward(self, mean_actions: torch.Tensor, std_actions: torch.Tensor, old_actions: torch.Tensor = None) -> tuple:
+        """
+        Computes the forward pass for the Gaussian distributiion
 
+        @param mean_actions: The mean of the Gaussian distribution 
+        @param std_actions: The standard deviation of the Gaussian distribution 
+        @param old_actions: The previous actions 
+        """
         distribution = Normal(mean_actions, std_actions)
         actions_with_exploration = distribution.sample()
 
@@ -39,19 +43,19 @@ class PPO(nn.Module):
         super(PPO, self).__init__()
 
         # CNN
-        self.conv2D_0 = nn.Conv2d(1, 8, kernel_size=4, stride=2)
-        self.conv2D_1 = nn.Conv2d(8, 16, kernel_size=3, stride=2)
-        self.conv2D_2 = nn.Conv2d(16, 32, kernel_size=3, stride=2)
-        self.conv2D_3 = nn.Conv2d(32, 64, kernel_size=3, stride=2)
-        self.conv2D_4 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
-        self.conv2D_5 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
+        self.conv2D_0 = nn.Conv2d(1, 256, kernel_size=4, stride=2)  
+        self.conv2D_1 = nn.Conv2d(256, 128, kernel_size=3, stride=2)
+        self.conv2D_2 = nn.Conv2d(128, 64, kernel_size=3, stride=2)
+        self.conv2D_3 = nn.Conv2d(64, 32, kernel_size=3, stride=2)
+        self.conv2D_4 = nn.Conv2d(32, 16, kernel_size=3, stride=2, padding=1)
+        self.conv2D_5 = nn.Conv2d(16, 8, kernel_size=3, stride=2) 
 
         # Actor
-        self.action_mean = nn.Linear(256, output_size)
-        self.action_std = nn.Linear(256, output_size)
+        self.action_mean = nn.Linear(8, output_size)
+        self.action_std = nn.Linear(8, output_size)
 
         # Critic
-        self.critic_output = nn.Linear(256, 1)
+        self.critic_output = nn.Linear(8, 1)
 
         self.relu = nn.ReLU()
         self.softplus = nn.Softplus()
@@ -104,7 +108,7 @@ class Policy(nn.Module):
         self.value_factor = 0.5
         self.entropy_factor = 0.005
 
-        self.episodes = 10000
+        self.episodes = 10
         self.updates_per_episode = 5
 
         self.ppoAgent = PPO(output_size=3).to(device)
@@ -173,18 +177,18 @@ class Policy(nn.Module):
             memory.append([state, action, reward, log_action])
             state = next_state
 
-            states, actions, rewards, log_actions = map(np.array, zip(*memory))
-    
-            # Discounted rewards
-            discount = 0
-            discountedRewards = np.zeros(len(rewards))
+        states, actions, rewards, log_actions = map(np.array, zip(*memory))
 
-            for i in reversed(range(len(rewards))): # Reverse order
-                discount = rewards[i] + self.gamma*discount
-                discountedRewards[i] = discount
+        # Discounted rewards
+        discount = 0
+        discountedRewards = np.zeros(len(rewards))
 
-            return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
-                    self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
+        for i in reversed(range(len(rewards))): # Reverse order
+            discount = rewards[i] + self.gamma*discount
+            discountedRewards[i] = discount
+
+        return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
+                self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
         
 
     def forward(self, x: np.ndarray) -> tuple:
@@ -196,10 +200,6 @@ class Policy(nn.Module):
         x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
 
         mean, actions, log_actions, _, _ = self.ppoAgent(x)
-
-        actions[0][0] = torch.clamp(actions[0][0], min=-1, max=1)
-        actions[0][1] = torch.clamp(actions[0][1], min=0, max=0.5)
-        actions[0][2] = torch.clamp(actions[0][2], min=0, max=1)
 
         actions = actions[0].detach().cpu().numpy()
         log_actions = log_actions[0].detach().cpu().numpy()
@@ -218,10 +218,6 @@ class Policy(nn.Module):
         
         _, actions, _, _, _ = self.ppoAgent(state)
 
-        actions[0][0] = torch.clamp(actions[0][0], min=-1, max=1)
-        actions[0][1] = torch.clamp(actions[0][1], min=0, max=0.5)
-        actions[0][2] = torch.clamp(actions[0][2], min=0, max=1)
-
         return actions[0].detach().cpu().numpy()
 
     def train(self):
@@ -229,7 +225,7 @@ class Policy(nn.Module):
         Computes the training phase
         """
         # Adam optimizer
-        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0001)
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0015)
 
         scores = []
 
@@ -244,16 +240,16 @@ class Policy(nn.Module):
             _, _, _, _, values = self.ppoAgent(states)
 
             advantages = returns - values.detach()
-            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-4)
+            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
 
             self.ppoAgent.train() # Update
 
-            for n_step in range(self.episodes):
+            for n_step in range(self.updates_per_episode):
                 optimizer.zero_grad()
                 policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
 
                 loss = 2*policy_loss + self.value_factor*value_loss + self.entropy_factor*entropy_loss
-                print(f"Loss at step n°{n_step}: {loss:.5f}")
+                print(f"Loss at step n°{n_step+1}: {loss:.5f}")
 
                 loss.backward() # Backpropagation
 
@@ -285,10 +281,10 @@ class Policy(nn.Module):
         ret.device = device
         return ret
 
-    def to_torch(self, nparray: np.ndarray) -> torch.tensor:
+    def to_torch(self, np_array: np.ndarray) -> torch.tensor:
         """
         Converts a numpy array to a tensor
 
         @param nparray: The numpy array
         """
-        return torch.tensor(nparray.copy(), dtype=torch.float32, device=self.device)
+        return torch.tensor(np_array.copy(), dtype=torch.float32, device=self.device)
