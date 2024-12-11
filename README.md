@@ -14,9 +14,9 @@ Run inside the repository:
         usage: main.py [-t] [-e] [--render]
 
         optional arguments:
-          -t, --train     Train the model
-          -e, --evaluate  Evaluate the model
-          --render        Enable rendering
+          -t, --train         Train the model
+          -e, --evaluate      Evaluate the model
+          --render            Enable rendering
 
 ### Commands examples:
 
