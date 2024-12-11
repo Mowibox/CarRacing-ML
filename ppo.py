@@ -20,6 +20,9 @@ class Gaussian(nn.Module):
         super().__init__()
 
     def forward(self, mean_actions, std_actions, old_actions):
+        print(f"mean_actions: {mean_actions}")
+        print(f"std_actions: {std_actions}")
+
         distribution = Normal(mean_actions, std_actions)
         actions_with_exploration = distribution.sample()
 
@@ -33,28 +36,30 @@ class Gaussian(nn.Module):
 
 class PPO(nn.Module):
     def __init__(self, output_size):
-        super().__init__(PPO, self).__init__()
+        super(PPO, self).__init__()
 
         # CNN
-        self.conv2D_0 = nn.Conv2d(1, 256, kernel_size=3, stride=1)
-        self.conv2D_1 = nn.Conv2d(256, 128, kernel_size=3, stride=1)
-        self.conv2D_2 = nn.Conv2d(128, 64, kernel_size=3, stride=1)
-        self.conv2D_3 = nn.Conv2d(64, 32, kernel_size=3, stride=1)
-        self.conv2D_4 = nn.Conv2d(32, 16, kernel_size=3, stride=1)
+        self.conv2D_0 = nn.Conv2d(1, 8, kernel_size=4, stride=2)
+        self.conv2D_1 = nn.Conv2d(8, 16, kernel_size=3, stride=2)
+        self.conv2D_2 = nn.Conv2d(16, 32, kernel_size=3, stride=2)
+        self.conv2D_3 = nn.Conv2d(32, 64, kernel_size=3, stride=2)
+        self.conv2D_4 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
+        self.conv2D_5 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
 
         # Actor
-        self.action_mean = nn.Linear(16, output_size)
-        self.action_std = nn.Linear(16, output_size)
+        self.action_mean = nn.Linear(256, output_size)
+        self.action_std = nn.Linear(256, output_size)
 
         # Critic
-        self.critic_output = nn.Linear(16, 1)
+        self.critic_output = nn.Linear(256, 1)
 
         self.relu = nn.ReLU()
+        self.softplus = nn.Softplus()
         self.gaussian = Gaussian()
 
         # Orthogonal weights initialization
         for layer in [self.conv2D_0, self.conv2D_1, self.conv2D_2, self.conv2D_3,\
-                      self.conv2D_4, self.action_mean, self.critic_output]:
+                      self.conv2D_4, self.conv2D_5, self.action_mean, self.action_std, self.critic_output]:
             torch.nn.init.orthogonal_(layer.weight)
             torch.nn.init.zeros_(layer.bias)
     
@@ -69,12 +74,13 @@ class PPO(nn.Module):
         x = self.relu(self.conv2D_2(x))
         x = self.relu(self.conv2D_3(x))
         x = self.relu(self.conv2D_4(x))
+        x = self.relu(self.conv2D_5(x))
 
         x = x.view(x.shape[0], -1)
 
         # Actor
         x_action_mean = self.action_mean(x)
-        x_action_std = self.relu(self.action_std(x))
+        x_action_std = self.softplus(self.action_std(x)) # To stay positive! :)
 
         mean, actions, log_actions, entropy = self.gaussian(x_action_mean, x_action_std, old_actions)
         
@@ -157,7 +163,7 @@ class Policy(nn.Module):
                 if reward < 0:
                     streak += 1
                     if streak > 100:
-                        reward -= 100
+                        reward = -100
                         while not done:
                             _, _, terminated, truncated, _ = self.env.step(fixed_action)
                             done = terminated or truncated
@@ -168,17 +174,17 @@ class Policy(nn.Module):
             state = next_state
 
             states, actions, rewards, log_actions = map(np.array, zip(*memory))
-
+    
             # Discounted rewards
             discount = 0
             discountedRewards = np.zeros(len(rewards))
 
-            for i in range(0, len(rewards), -1): # Reverse order
-                discount[i] = rewards[i] + self.gamma*discount
+            for i in reversed(range(len(rewards))): # Reverse order
+                discount = rewards[i] + self.gamma*discount
                 discountedRewards[i] = discount
 
-            return self.to(states).mean(dim=3).unsqueeze(dim=1), self.to(actions), \
-                    self.to(discountedRewards).reshape(-1, 1), self.to(log_actions), total_reward
+            return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
+                    self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
         
 
     def forward(self, x: np.ndarray) -> tuple:
@@ -186,13 +192,17 @@ class Policy(nn.Module):
         Computes the forward pass 
         @param x: The current state
         """
-        x /= 225.0 # Data normalization
-        x = self.to(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        x = x / 255.0 # Data normalization
+        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
 
         mean, actions, log_actions, _, _ = self.ppoAgent(x)
 
-        actions = actions.detach().cpu().numpy()
-        log_actions = log_actions[0].detach.cpu().numpy()
+        actions[0][0] = torch.clamp(actions[0][0], min=-1, max=1)
+        actions[0][1] = torch.clamp(actions[0][1], min=0, max=0.5)
+        actions[0][2] = torch.clamp(actions[0][2], min=0, max=1)
+
+        actions = actions[0].detach().cpu().numpy()
+        log_actions = log_actions[0].detach().cpu().numpy()
         mean = mean[0].detach().cpu().numpy()
 
         return mean, actions, log_actions
@@ -203,36 +213,40 @@ class Policy(nn.Module):
 
         @param state: The current state
         """
-        state /= 225.0 # Data normalization
-        state = self.to(state).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        state = state / 255.0 # Data normalization
+        state = self.to_torch(state).mean(dim=2).reshape(1, 1, state.shape[0], state.shape[1]) # Shape: (1, 1, 96, 96)
         
         _, actions, _, _, _ = self.ppoAgent(state)
 
-        return actions.detach().cpu().numpy()
+        actions[0][0] = torch.clamp(actions[0][0], min=-1, max=1)
+        actions[0][1] = torch.clamp(actions[0][1], min=0, max=0.5)
+        actions[0][2] = torch.clamp(actions[0][2], min=0, max=1)
+
+        return actions[0].detach().cpu().numpy()
 
     def train(self):
         """
         Computes the training phase
         """
         # Adam optimizer
-        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0001)
 
         scores = []
 
         for iteration in range(self.episodes):
             with torch.no_grad():
-                self.agent.eval()
-                states, actions, returns, log_actions, episode_score = self.rollout(it=iteration)
+                self.ppoAgent.eval()
+                states, actions, returns, log_actions, episode_score = self.rollout(iteration=iteration)
 
             scores.append(episode_score)
             print(f"Score at episode {len(scores)}: {scores[-1]}")
 
-            _, _, _, _,values = self.ppoAgent(states)
+            _, _, _, _, values = self.ppoAgent(states)
 
             advantages = returns - values.detach()
-            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
+            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-4)
 
-            self.agent.train() # Update
+            self.ppoAgent.train() # Update
 
             for n_step in range(self.episodes):
                 optimizer.zero_grad()
@@ -243,10 +257,10 @@ class Policy(nn.Module):
 
                 loss.backward() # Backpropagation
 
-                torch.nn.utils.clip_grad_norm_(self.agent.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.ppoAgent.parameters(), 0.5)
 
                 optimizer.step()
-                
+
         return
 
     def save(self):
@@ -270,3 +284,11 @@ class Policy(nn.Module):
         ret = super().to(device)
         ret.device = device
         return ret
+
+    def to_torch(self, nparray: np.ndarray) -> torch.tensor:
+        """
+        Converts a numpy array to a tensor
+
+        @param nparray: The numpy array
+        """
+        return torch.tensor(nparray.copy(), dtype=torch.float32, device=self.device)
