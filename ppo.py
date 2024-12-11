@@ -176,10 +176,29 @@ class Policy(nn.Module):
         Computes the forward pass 
         @param x: The current state
         """
-        return x
+        x /= 225.0
+        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+
+        mean, actions, log_actions, _, _ = self.ppoAgent(x)
+
+        actions = actions.detach().cpu().numpy()
+        log_actions = log_actions[0].detach.cpu().numpy()
+        mean = mean[0].detach().cpu().numpy()
+
+        return mean, actions, log_actions
     
-    def act(self, state):
-        return 
+    def act(self, state: np.ndarray):
+        """
+        Computes the act phase
+
+        @param state: The current state
+        """
+        x /= 225.0
+        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        
+        _, actions, _, _, _ = self.ppoAgent(x)
+        
+        return actions.detach().cpu().numpy()
 
     def train(self):
         return
