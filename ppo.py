@@ -108,7 +108,7 @@ class Policy(nn.Module):
         self.value_factor = 0.5
         self.entropy_factor = 0.005
 
-        self.episodes = 10
+        self.episodes = 100
         self.updates_per_episode = 5
 
         self.ppoAgent = PPO(output_size=3).to(device)
@@ -226,7 +226,7 @@ class Policy(nn.Module):
         optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0015)
 
         scores = []
-
+        best_score = -float('inf')
         for iteration in range(self.episodes):
             with torch.no_grad():
                 self.ppoAgent.eval()
@@ -234,6 +234,9 @@ class Policy(nn.Module):
 
             scores.append(episode_score)
             print(f"Score at episode {len(scores)}: {scores[-1]}")
+            if episode_score > best_score:
+                best_score = episode_score
+                self.save() 
 
             _, _, _, _, values = self.ppoAgent(states)
 
