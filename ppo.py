@@ -26,18 +26,18 @@ class PPO(nn.Module):
         super().__init__(PPO, self).__init__()
 
         # CNN
-        self.conv2D_0 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
-        self.conv2D_1 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
-        self.conv2D_2 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
-        self.conv2D_3 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
-        self.conv2D_4 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+        self.conv2D_0 = nn.Conv2d(1, 256, kernel_size=3, stride=1)
+        self.conv2D_1 = nn.Conv2d(256, 128, kernel_size=3, stride=1)
+        self.conv2D_2 = nn.Conv2d(128, 64, kernel_size=3, stride=1)
+        self.conv2D_3 = nn.Conv2d(64, 32, kernel_size=3, stride=1)
+        self.conv2D_4 = nn.Conv2d(32, 16, kernel_size=3, stride=1)
 
         # Actor
-        self.action_mean = nn.Linear(256, output_size)
-        self.action_std = nn.Linear(256, output_size)
+        self.action_mean = nn.Linear(16, output_size)
+        self.action_std = nn.Linear(16, output_size)
 
         # Critic
-        self.critic_output = nn.Linear(256, 1)
+        self.critic_output = nn.Linear(16, 1)
 
         self.relu = nn.ReLU()
         self.gaussian = Gaussian()
@@ -47,6 +47,32 @@ class PPO(nn.Module):
                       self.conv2D_4, self.action_mean, self.critic_output]:
             torch.nn.init.orthogonal_(layer.weight)
             torch.nn.init.zeros_(layer.bias)
+    
+    def forward(self, x: torch.Tensor, old_actions=None) -> tuple:
+        """
+        Computes the forward pass through the PPO
+        @param x: The current state
+        @param old_actions: The old-actions for log-probability calculation
+        """
+        x = self.relu(self.conv2D_0(x))
+        x = self.relu(self.conv2D_1(x))
+        x = self.relu(self.conv2D_2(x))
+        x = self.relu(self.conv2D_3(x))
+        x = self.relu(self.conv2D_4(x))
+
+        x = x.view(x.shape[0], -1)
+
+        # Actor
+        x_action_mean = self.action_mean(x)
+        x_action_std = self.relu(self.action_std(x))
+
+        mean, actions, log_actions, entropy = self.gaussian(x_action_mean, x_action_std, old_actions)
+        
+        # Critic
+        x_value = self.critic_output(x)
+
+        return mean, actions, log_actions, entropy, x_value
+     
 
 class Policy(nn.Module):
     continuous = True
