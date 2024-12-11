@@ -120,7 +120,62 @@ class Policy(nn.Module):
         
         return policy_loss, value_loss, entropy_loss
 
-    def forward(self, x):
+    def rollout(self, iteration: int) -> tuple:
+        """
+        Computes the rollout for the training phase
+
+        @param iteration: The number of iteration (episode)
+        """
+        state, _ = self.env.reset()
+
+        done = False
+        memory = []
+        streak, total_reward = 0, 0
+
+        while not done:
+            _, action, log_action = self.forward(state)
+            fixed_action = action.copy()
+
+            next_state, reward, done, _, _ = self.env.step(fixed_action)
+            total_reward += reward
+
+            if total_reward > 900:
+                reward = 100
+                while not done:
+                    _, _, done, _ = self.env.step(fixed_action)
+            else: 
+                if reward < 0:
+                    streak += 1
+                    if streak > 100:
+                        reward -= 100
+                        while not done:
+                            _, _, terminated, truncated, _ = self.env.step(fixed_action)
+                            done = terminated or truncated
+                else:
+                    streak = 0
+            
+            memory.append([state, action, reward, log_action])
+            state = next_state
+
+            states, actions, rewards, log_actions = map(np.array, zip(*memory))
+
+            # Discounted rewards
+            discount = 0
+            discountedRewards = np.zeros(len(rewards))
+
+            for i in range(0, len(rewards), -1): # Reverse order
+                discount[i] = rewards[i] + self.gamma*discount
+                discountedRewards[i] = discount
+
+            return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
+                    self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
+        
+
+    def forward(self, x: np.ndarray) -> tuple:
+        """
+        Computes the forward pass 
+        @param x: The current state
+        """
         return x
     
     def act(self, state):
