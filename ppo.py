@@ -76,10 +76,49 @@ class PPO(nn.Module):
 
 class Policy(nn.Module):
     continuous = True
+    env = gym.make('CarRacing-v2', continuous=continuous, render_mode="rgb_array")
 
     def __init__(self, device=torch.device('cpu')):
         super(Policy, self).__init__()
         self.device = device
+
+        # PPO Hyperparameters
+        self.gamma = 0.98
+        self.epsilon = 0.2
+        self.value_factor = 0.5
+        self.entropy_factor = 0.005
+
+        self.episodes = 10000
+        self.updates_per_episode = 5
+
+        self.ppoAgent = PPO(output_size=3).to(device)
+
+    def compute_losses(self, 
+                       states: torch.Tensor, 
+                       actions: torch.Tensor, 
+                       returns: torch.Tensor, 
+                       log_actions: torch.Tensor, 
+                       advantages: torch.Tensor) -> tuple:
+        """
+        Computes the losses for the PPO training phases
+
+        @param states: The observed states
+        @param actions: The actions
+        @param returns: The discounted rewards
+        @param log_actions: The actions log-probabilities 
+        @param advantages: The advantages estimates
+        """
+        _, _, log_actions_new, entropy, values = self.ppoAgent(states, actions)
+
+        ratios = torch.exp(log_actions_new - log_actions)
+
+        policy_loss = torch.min(ratios*advantages, torch.clip(ratios, 1-self.epsilon, 1+self.epsilon)*advantages)
+        policy_loss = -torch.mean(policy_loss)
+
+        value_loss = ((advantages + values)**2).mean()
+        entropy_loss = -torch.mean(entropy)
+        
+        return policy_loss, value_loss, entropy_loss
 
     def forward(self, x):
         return x
