@@ -19,7 +19,34 @@ class Gaussian(nn.Module):
             log_actions = distribution.log_prob(old_actions)
 
         return distribution.mean, actions_with_exploration, log_actions, distribution.entropy()
+    
 
+class PPO(nn.Module):
+    def __init__(self, output_size):
+        super().__init__(PPO, self).__init__()
+
+        # CNN
+        self.conv2D_0 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+        self.conv2D_1 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+        self.conv2D_2 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+        self.conv2D_3 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+        self.conv2D_4 = nn.Conv2d(..., ..., kernel_size=..., stride=...)
+
+        # Actor
+        self.action_mean = nn.Linear(256, output_size)
+        self.action_std = nn.Linear(256, output_size)
+
+        # Critic
+        self.critic_output = nn.Linear(256, 1)
+
+        self.relu = nn.ReLU()
+        self.gaussian = Gaussian()
+
+        # Orthogonal weights initialization
+        for layer in [self.conv2D_0, self.conv2D_1, self.conv2D_2, self.conv2D_3,\
+                      self.conv2D_4, self.action_mean, self.critic_output]:
+            torch.nn.init.orthogonal_(layer.weight)
+            torch.nn.init.zeros_(layer.bias)
 
 class Policy(nn.Module):
     continuous = True
