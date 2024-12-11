@@ -140,11 +140,9 @@ class Policy(nn.Module):
         
         return policy_loss, value_loss, entropy_loss
 
-    def rollout(self, iteration: int) -> tuple:
+    def rollout(self) -> tuple:
         """
         Computes the rollout for the training phase
-
-        @param iteration: The number of iteration (episode)
         """
         state, _ = self.env.reset()
 
@@ -232,7 +230,7 @@ class Policy(nn.Module):
         for iteration in range(self.episodes):
             with torch.no_grad():
                 self.ppoAgent.eval()
-                states, actions, returns, log_actions, episode_score = self.rollout(iteration=iteration)
+                states, actions, returns, log_actions, episode_score = self.rollout()
 
             scores.append(episode_score)
             print(f"Score at episode {len(scores)}: {scores[-1]}")
