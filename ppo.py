@@ -46,7 +46,7 @@ class PPO(nn.Module):
         self.conv2D_0 = nn.Conv2d(1, 8, kernel_size=4, stride=2)  
         self.conv2D_1 = nn.Conv2d(8, 16, kernel_size=3, stride=2)
         self.conv2D_2 = nn.Conv2d(16, 64, kernel_size=3, stride=2)
-        self.conv2D_3 = nn.Conv2d(64, 128, kernel_size=3, stride=2)
+        self.conv2D_3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
         self.conv2D_4 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
 
 
@@ -78,7 +78,6 @@ class PPO(nn.Module):
         x = self.relu(self.conv2D_2(x))
         x = self.relu(self.conv2D_3(x))
         x = self.relu(self.conv2D_4(x))
-        # x = self.relu(self.conv2D_5(x))
 
         x = x.view(x.shape[0], -1)
 
@@ -103,10 +102,10 @@ class Policy(nn.Module):
         self.device = device
 
         # PPO Hyperparameters
-        self.gamma = 0.95
+        self.gamma = 0.99
         self.epsilon = 0.2
         self.value_factor = 0.5
-        self.entropy_factor = 0.005
+        self.entropy_factor = 0.01
 
         self.episodes = 100
         self.updates_per_episode = 5
@@ -195,7 +194,8 @@ class Policy(nn.Module):
         @param x: The current state
         """
         x = x / 255.0 # Data normalization
-        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 96, 96)
+        x = x[:-12, 6:-6] # Keeping the relevant info
+        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 83, 83)
 
         mean, actions, log_actions, _, _ = self.ppoAgent(x)
 
@@ -212,7 +212,8 @@ class Policy(nn.Module):
         @param state: The current state
         """
         state = state / 255.0 # Data normalization
-        state = self.to_torch(state).mean(dim=2).reshape(1, 1, state.shape[0], state.shape[1]) # Shape: (1, 1, 96, 96)
+        state = state[:-12, 6:-6] # Keeping the relevant info
+        state = self.to_torch(state).mean(dim=2).reshape(1, 1, state.shape[0], state.shape[1]) # Shape: (1, 1, 83, 83)
         
         _, actions, _, _, _ = self.ppoAgent(state)
 
