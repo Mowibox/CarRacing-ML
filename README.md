@@ -30,6 +30,6 @@ To try out the model with environment display:
 ```
 python main.py --evaluate --render
 ``` 
-![After 1000 episodes](./episodes1000.gif)
+![After 1000 episodes](assets/episodes1000.gif)
 
-
+_Training after 1000 episodes_
