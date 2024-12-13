@@ -15,6 +15,7 @@ import gymnasium as gym
 import torch.nn.functional as F
 from torch.distributions import Normal
 
+
 class Gaussian(nn.Module):
     def __init__(self):
         super().__init__()
@@ -137,6 +138,7 @@ class Policy(nn.Module):
         entropy_loss = -torch.mean(entropy)
         
         return policy_loss, value_loss, entropy_loss
+    
 
     def rollout(self) -> tuple:
         """
@@ -204,6 +206,7 @@ class Policy(nn.Module):
 
         return mean, actions, log_actions
     
+    
     def act(self, state: np.ndarray):
         """
         Computes the act phase
@@ -217,6 +220,7 @@ class Policy(nn.Module):
         _, actions, _, _, _ = self.ppoAgent(state)
 
         return actions[0].detach().cpu().numpy()
+    
 
     def train(self):
         """
@@ -227,44 +231,39 @@ class Policy(nn.Module):
 
         scores = []
         best_score = -float('inf')
-        try:
-            for _ in range(self.episodes):
-                with torch.no_grad():
-                    self.ppoAgent.eval()
-                    states, actions, returns, log_actions, episode_score = self.rollout()
 
-                scores.append(episode_score)
-                print(f"Score at episode {len(scores)}: {scores[-1]}")
-                if episode_score > best_score:
-                    best_score = episode_score
-                    self.save() 
+        for _ in range(self.episodes):
+            with torch.no_grad():
+                self.ppoAgent.eval()
+                states, actions, returns, log_actions, episode_score = self.rollout()
 
-                _, _, _, _, values = self.ppoAgent(states)
+            scores.append(episode_score)
+            print(f"Score at episode {len(scores)}: {scores[-1]}")
+            if episode_score > best_score:
+                best_score = episode_score
+                self.save() 
 
-                advantages = returns - values.detach()
-                advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
+            _, _, _, _, values = self.ppoAgent(states)
 
-                self.ppoAgent.train() # Update
+            advantages = returns - values.detach()
+            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
 
-                for n_step in range(self.updates_per_episode):
-                    optimizer.zero_grad()
-                    policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
+            self.ppoAgent.train() # Update
 
-                    loss = 2*policy_loss + self.value_coeff*value_loss + self.entropy_coeff*entropy_loss
-                    print(f"Loss at step n°{n_step+1}: {loss:.4f}")
+            for n_step in range(self.updates_per_episode):
+                optimizer.zero_grad()
+                policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
 
-                    loss.backward() # Backpropagation
+                loss = 2*policy_loss + self.value_coeff*value_loss + self.entropy_coeff*entropy_loss
+                print(f"Loss at step n°{n_step+1}: {loss:.4f}")
 
-                    torch.nn.utils.clip_grad_norm_(self.ppoAgent.parameters(), 0.5)
+                loss.backward() # Backpropagation
 
-                    optimizer.step()
-        except KeyboardInterrupt:
-            print(f"\nTraining interrupted. Returning scores {scores}")
+                torch.nn.utils.clip_grad_norm_(self.ppoAgent.parameters(), 0.5)
 
-
-        print(f"Training finished. Returning scores: {scores}")
-
+                optimizer.step()
         return
+    
 
     def save(self):
         """
@@ -272,11 +271,13 @@ class Policy(nn.Module):
         """
         torch.save(self.state_dict(), 'modelPPO.pt')
 
+
     def load(self):
         """
         Loads the model
         """
         self.load_state_dict(torch.load('modelPPO.pt', map_location=self.device, weights_only=True))
+
 
     def to(self, device: torch.device) -> nn.Module:
         """
@@ -287,6 +288,7 @@ class Policy(nn.Module):
         ret = super().to(device)
         ret.device = device
         return ret
+    
 
     def to_torch(self, np_array: np.ndarray) -> torch.tensor:
         """

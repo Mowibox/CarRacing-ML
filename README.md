@@ -24,7 +24,7 @@ To train a new model:
 ```
 python run.py --train
 ```
-At the end of the training phase, a model named 'modelPPO.pt' will be created.
+In each episode of the training phase, the model with the best score is saved under the name 'modelPPO.pt'.
 
 To try out the model with environment display:
 ```
