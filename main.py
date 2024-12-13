@@ -1,5 +1,4 @@
 import argparse
-import random
 import numpy as np
 from ppo import Policy
 import gymnasium as gym
@@ -32,8 +31,6 @@ def evaluate(env=None, n_episodes=1, render=False):
 def train():
     agent = Policy()
     agent.train()
-    agent.save()
-
 
 def main():
     parser = argparse.ArgumentParser(description='Run training and evaluation')

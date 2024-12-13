@@ -49,7 +49,6 @@ class PPO(nn.Module):
         self.conv2D_3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
         self.conv2D_4 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
 
-
         # Actor
         self.action_mean = nn.Linear(1024, output_size)
         self.action_std = nn.Linear(1024, output_size)
@@ -104,10 +103,10 @@ class Policy(nn.Module):
         # PPO Hyperparameters
         self.gamma = 0.99
         self.epsilon = 0.2
-        self.value_factor = 0.5
-        self.entropy_factor = 0.01
+        self.value_coeff = 0.5
+        self.entropy_coeff = 0.01
 
-        self.episodes = 100
+        self.episodes = 10000
         self.updates_per_episode = 5
 
         self.ppoAgent = PPO(output_size=3).to(device)
@@ -224,40 +223,46 @@ class Policy(nn.Module):
         Computes the training phase
         """
         # Adam optimizer
-        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0001)
 
         scores = []
         best_score = -float('inf')
-        for iteration in range(self.episodes):
-            with torch.no_grad():
-                self.ppoAgent.eval()
-                states, actions, returns, log_actions, episode_score = self.rollout()
+        try:
+            for _ in range(self.episodes):
+                with torch.no_grad():
+                    self.ppoAgent.eval()
+                    states, actions, returns, log_actions, episode_score = self.rollout()
 
-            scores.append(episode_score)
-            print(f"Score at episode {len(scores)}: {scores[-1]}")
-            if episode_score > best_score:
-                best_score = episode_score
-                self.save() 
+                scores.append(episode_score)
+                print(f"Score at episode {len(scores)}: {scores[-1]}")
+                if episode_score > best_score:
+                    best_score = episode_score
+                    self.save() 
 
-            _, _, _, _, values = self.ppoAgent(states)
+                _, _, _, _, values = self.ppoAgent(states)
 
-            advantages = returns - values.detach()
-            advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
+                advantages = returns - values.detach()
+                advantages = (advantages - advantages.mean())/(advantages.std() + 1e-8)
 
-            self.ppoAgent.train() # Update
+                self.ppoAgent.train() # Update
 
-            for n_step in range(self.updates_per_episode):
-                optimizer.zero_grad()
-                policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
+                for n_step in range(self.updates_per_episode):
+                    optimizer.zero_grad()
+                    policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
 
-                loss = 2*policy_loss + self.value_factor*value_loss + self.entropy_factor*entropy_loss
-                print(f"Loss at step n°{n_step+1}: {loss:.4f}")
+                    loss = 2*policy_loss + self.value_coeff*value_loss + self.entropy_coeff*entropy_loss
+                    print(f"Loss at step n°{n_step+1}: {loss:.4f}")
 
-                loss.backward() # Backpropagation
+                    loss.backward() # Backpropagation
 
-                torch.nn.utils.clip_grad_norm_(self.ppoAgent.parameters(), 0.5)
+                    torch.nn.utils.clip_grad_norm_(self.ppoAgent.parameters(), 0.5)
 
-                optimizer.step()
+                    optimizer.step()
+        except KeyboardInterrupt:
+            print(f"\nTraining interrupted. Returning scores {scores}")
+
+
+        print(f"Training finished. Returning scores: {scores}")
 
         return
 
@@ -271,7 +276,7 @@ class Policy(nn.Module):
         """
         Loads the model
         """
-        self.load_state_dict(torch.load('modelPPO.pt', map_location=self.device))
+        self.load_state_dict(torch.load('modelPPO.pt', map_location=self.device, weights_only=True))
 
     def to(self, device: torch.device) -> nn.Module:
         """
