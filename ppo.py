@@ -12,8 +12,10 @@ import torch
 import numpy as np
 import torch.nn as nn
 import gymnasium as gym
+from gymnasium.wrappers import FrameStack
 import torch.nn.functional as F
 from torch.distributions import Normal
+
 
 
 class Gaussian(nn.Module):
@@ -29,43 +31,61 @@ class Gaussian(nn.Module):
         @param old_actions: The previous actions 
         """
         distribution = Normal(mean_actions, std_actions)
-        actions_with_exploration = distribution.sample()
 
         if old_actions is None:
-            log_actions = distribution.log_prob(actions_with_exploration)
+            actions = distribution.sample()
+            log_actions = distribution.log_prob(actions).sum(dim=-1)
         else:
-            log_actions = distribution.log_prob(old_actions)
-
-        return distribution.mean, actions_with_exploration, log_actions, distribution.entropy()
+            actions = old_actions
+            log_actions = distribution.log_prob(old_actions).sum(dim=-1)
+        entropy = distribution.entropy().sum(dim=-1)
+        return distribution.mean, actions, log_actions, entropy
     
 
 class PPO(nn.Module):
-    def __init__(self, output_size):
-        super(PPO, self).__init__()
+    def __init__(self, input_size, output_size):
+        super().__init__()
+
+        in_channels, H, W = input_size
 
         # CNN
-        self.conv2D_0 = nn.Conv2d(1, 8, kernel_size=4, stride=2)  
+        self.conv2D_0 = nn.Conv2d(in_channels, 8, kernel_size=4, stride=2)  
         self.conv2D_1 = nn.Conv2d(8, 16, kernel_size=3, stride=2)
         self.conv2D_2 = nn.Conv2d(16, 64, kernel_size=3, stride=2)
         self.conv2D_3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
         self.conv2D_4 = nn.Conv2d(128, 256, kernel_size=3, stride=2)
 
-        # Actor
-        self.action_mean = nn.Linear(1024, output_size)
-        self.action_std = nn.Linear(1024, output_size)
-
-        # Critic
-        self.critic_output = nn.Linear(1024, 1)
-
         self.relu = nn.ReLU()
         self.softplus = nn.Softplus()
         self.gaussian = Gaussian()
+        with torch.no_grad():
+
+            dummy = torch.zeros(1, in_channels, H, W)
+            y = self.forward_conv(dummy)
+            conv_out_size = y.view(1, -1).shape[1]
+
+        # Actor
+        self.action_mean = nn.Linear(conv_out_size, output_size)
+        self.action_std = nn.Linear(conv_out_size, output_size)
+
+        # Critic
+        self.critic_output = nn.Linear(conv_out_size, 1)
+
 
         # Orthogonal weights initialization
         for layer in [self.conv2D_0, self.conv2D_1, self.conv2D_2, self.conv2D_3,\
                       self.conv2D_4, self.action_mean, self.action_std, self.critic_output]:
             torch.nn.init.orthogonal_(layer.weight)
             torch.nn.init.zeros_(layer.bias)
+
+    def forward_conv(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.relu(self.conv2D_0(x))
+        x = self.relu(self.conv2D_1(x))
+        x = self.relu(self.conv2D_2(x))
+        x = self.relu(self.conv2D_3(x))
+        x = self.relu(self.conv2D_4(x))
+        return x
+
     
     def forward(self, x: torch.Tensor, old_actions=None) -> tuple:
         """
@@ -73,17 +93,12 @@ class PPO(nn.Module):
         @param x: The current state
         @param old_actions: The old-actions for log-probability calculation
         """
-        x = self.relu(self.conv2D_0(x))
-        x = self.relu(self.conv2D_1(x))
-        x = self.relu(self.conv2D_2(x))
-        x = self.relu(self.conv2D_3(x))
-        x = self.relu(self.conv2D_4(x))
-
+        x = self.forward_conv(x)
         x = x.view(x.shape[0], -1)
 
         # Actor
         x_action_mean = self.action_mean(x)
-        x_action_std = self.softplus(self.action_std(x)) # To stay positive! :)
+        x_action_std = self.softplus(self.action_std(x)) + 1e-6 # To stay positive! :)
 
         mean, actions, log_actions, entropy = self.gaussian(x_action_mean, x_action_std, old_actions)
         
@@ -94,12 +109,19 @@ class PPO(nn.Module):
      
 
 class Policy(nn.Module):
-    continuous = True
-    env = gym.make('CarRacing-v2', continuous=continuous, render_mode="rgb_array")
 
-    def __init__(self, device=torch.device('cpu')):
-        super(Policy, self).__init__()
+
+    def __init__(self, device=torch.device('cpu'), stack_size=8):
+        super().__init__()
         self.device = device
+        self.stack_size = stack_size
+        self.continuous = True
+
+        self.env = gym.make('CarRacing-v2', continuous=self.continuous, render_mode="rgb_array")
+        self.env = FrameStack(self.env, self.stack_size)
+        obs, _ = self.env.reset()
+        stack, H, W, C = obs.shape
+        in_channels = stack * C   
 
         # PPO Hyperparameters
         self.gamma = 0.99
@@ -110,7 +132,7 @@ class Policy(nn.Module):
         self.episodes = 10000
         self.updates_per_episode = 5
 
-        self.ppoAgent = PPO(output_size=3).to(device)
+        self.ppoAgent = PPO(output_size=3, input_size=(in_channels, H, W)).to(device)
 
     def compute_losses(self, 
                        states: torch.Tensor, 
@@ -127,16 +149,17 @@ class Policy(nn.Module):
         @param log_actions: The actions log-probabilities 
         @param advantages: The advantages estimates
         """
+        actions = actions.detach()
+        log_actions = log_actions.detach()
         _, _, log_actions_new, entropy, values = self.ppoAgent(states, actions)
-
+        advantages = advantages.view(-1)
         ratios = torch.exp(log_actions_new - log_actions)
+        unclipped = ratios * advantages
+        clipped = torch.clamp(ratios, 1 - self.epsilon, 1 + self.epsilon) * advantages
+        policy_loss = -torch.mean(torch.min(unclipped, clipped))
 
-        policy_loss = torch.min(ratios*advantages, torch.clip(ratios, 1-self.epsilon, 1+self.epsilon)*advantages)
-        policy_loss = -torch.mean(policy_loss)
-
-        value_loss = ((advantages + values)**2).mean()
+        value_loss = F.mse_loss(values, returns)
         entropy_loss = -torch.mean(entropy)
-        
         return policy_loss, value_loss, entropy_loss
     
 
@@ -145,30 +168,32 @@ class Policy(nn.Module):
         Computes the rollout for the training phase
         """
         state, _ = self.env.reset()
+        state = np.array(state)
 
         done = False
         memory = []
-        streak, total_reward = 0, 0
+        streak, total_reward = 0, 0.0
 
         while not done:
-            _, action, log_action = self.forward(state)
+            mean, action, log_action = self.forward(state)
             fixed_action = action.copy()
 
-            next_state, reward, done, _, _ = self.env.step(fixed_action)
+            next_state, reward, terminated, truncated, info = self.env.step(fixed_action)
+            next_state = np.array(next_state)
+            done = terminated or truncated
             total_reward += reward
 
             if total_reward > 900:
                 reward = 100
-                while not done:
-                    _, _, done, _ = self.env.step(fixed_action)
+                memory.append([state, action, reward, log_action])
+                break
             else: 
                 if reward < 0:
                     streak += 1
                     if streak > 100:
                         reward = -100
-                        while not done:
-                            _, _, terminated, truncated, _ = self.env.step(fixed_action)
-                            done = terminated or truncated
+                        memory.append([state, action, reward, log_action])
+                        break
                 else:
                     streak = 0
             
@@ -185,8 +210,21 @@ class Policy(nn.Module):
             discount = rewards[i] + self.gamma*discount
             discountedRewards[i] = discount
 
-        return self.to_torch(states).mean(dim=3).unsqueeze(dim=1), self.to_torch(actions), \
-                self.to_torch(discountedRewards).reshape(-1, 1), self.to_torch(log_actions), total_reward
+        state_tensors = []
+        for s in states: 
+            s = s / 255.0
+            s = s[:, :-12, 6:-6, :]
+            stack_s, Hs, Ws, Cs = s.shape
+            s = s.transpose(0, 3, 1, 2).reshape(stack_s * Cs, Hs, Ws)  
+            state_tensors.append(s)
+
+        states_t = torch.tensor(np.stack(state_tensors, axis=0), dtype=torch.float32, device=self.device)
+        actions_t = torch.tensor(actions, dtype=torch.float32, device=self.device)
+        returns_t = torch.tensor(discountedRewards, dtype=torch.float32, device=self.device).unsqueeze(1)
+        log_actions_t = torch.tensor(log_actions, dtype=torch.float32, device=self.device)
+
+
+        return states_t, actions_t, returns_t, log_actions_t, total_reward
         
 
     def forward(self, x: np.ndarray) -> tuple:
@@ -194,9 +232,12 @@ class Policy(nn.Module):
         Computes the forward pass 
         @param x: The current state
         """
-        x = x / 255.0 # Data normalization
-        x = x[:-12, 6:-6] # Keeping the relevant info
-        x = self.to_torch(x).mean(dim=2).reshape(1, 1, x.shape[0], x.shape[1]) # Shape: (1, 1, 83, 83)
+        x = np.array(x)
+        x = x.astype(np.float32) / 255.0  # Data normalization (only once)
+        x = x[:, :-12, 6:-6, :]  # crop height and width
+        stack, H, W, C = x.shape
+        x = x.transpose(0, 3, 1, 2).reshape(stack * C, H, W)  # Shape: (stack*C, H, W)
+        x = torch.as_tensor(x, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         mean, actions, log_actions, _, _ = self.ppoAgent(x)
 
@@ -213,12 +254,14 @@ class Policy(nn.Module):
 
         @param state: The current state
         """
-        state = state / 255.0 # Data normalization
-        state = state[:-12, 6:-6] # Keeping the relevant info
-        state = self.to_torch(state).mean(dim=2).reshape(1, 1, state.shape[0], state.shape[1]) # Shape: (1, 1, 83, 83)
+        state = np.array(state)
+        state = state.astype(np.float32) / 255.0
+        state = state[:, :-12, 6:-6, :]  # crop
+        stack, H, W, C = state.shape
+        state = state.transpose(0, 3, 1, 2).reshape(stack * C, H, W)  # Shape: (stack*C, H, W)
+        state = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         
         _, actions, _, _, _ = self.ppoAgent(state)
-
         return actions[0].detach().cpu().numpy()
     
 
@@ -227,18 +270,18 @@ class Policy(nn.Module):
         Computes the training phase
         """
         # Adam optimizer
-        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=0.0001)
+        optimizer = torch.optim.Adam(self.ppoAgent.parameters(), lr=1e-4)
 
         scores = []
         best_score = -float('inf')
 
-        for _ in range(self.episodes):
+        for episode in range(self.episodes):
             with torch.no_grad():
                 self.ppoAgent.eval()
                 states, actions, returns, log_actions, episode_score = self.rollout()
 
             scores.append(episode_score)
-            print(f"Score at episode {len(scores)}: {scores[-1]}")
+            print(f"Score at episode {episode}: {scores[-1]:.2f}")
             if episode_score > best_score:
                 best_score = episode_score
                 self.save() 
@@ -254,7 +297,7 @@ class Policy(nn.Module):
                 optimizer.zero_grad()
                 policy_loss, value_loss, entropy_loss = self.compute_losses(states, actions, returns, log_actions, advantages)
 
-                loss = 2*policy_loss + self.value_coeff*value_loss + self.entropy_coeff*entropy_loss
+                loss = policy_loss + self.value_coeff*value_loss + self.entropy_coeff*entropy_loss
                 print(f"Loss at step n°{n_step+1}: {loss:.4f}")
 
                 loss.backward() # Backpropagation

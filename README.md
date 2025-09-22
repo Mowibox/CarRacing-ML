@@ -5,7 +5,7 @@ Machine learning and reinforcement learning project to control a car in the CarR
 
 ## Reinforcement Learning
 
-Control of the car via Reinforcement learning was achieved based on the PPO algorithm. The related research paper is available in the folder .
+Control of the car via Reinforcement learning was achieved based on the PPO (Proximal Policy Optimization) algorithm. The related research paper is available in the ['paper/'](https://github.com/Mowibox/CarRacing-ML/tree/main/paper) folder.
 
 Run inside the repository:
 
@@ -18,18 +18,22 @@ Run inside the repository:
           -e, --evaluate      Evaluate the model
           --render            Enable rendering
 
-### Commands examples:
+### Command examples
 
 To train a new model:
+
+```bash
+python main.py --train
 ```
-python run.py --train
-```
+
 In each episode of the training phase, the model with the best score is saved under the name 'modelPPO.pt'.
 
 To try out the model with environment display:
-```
+
+```bash
 python main.py --evaluate --render
-``` 
+```
+
 ![After 1000 episodes](assets/episodes1000.gif)
 
 _Training after 1000 episodes_

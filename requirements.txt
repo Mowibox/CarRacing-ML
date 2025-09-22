@@ -1,7 +1,11 @@
+pip
+setuptools
+wheel
+
 numpy==1.26.4
 scipy
+scikit-learn
+torch
 swig
 gymnasium==0.29.1
 gymnasium[box2d]
-scikit-learn
-torch

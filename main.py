@@ -1,15 +1,21 @@
 import argparse
-import numpy as np
-from ppo import Policy
+
 import gymnasium as gym
+from gymnasium.wrappers import FrameStack
+import numpy as np
+
+from ppo import Policy
+
 
 def evaluate(env=None, n_episodes=1, render=False):
     agent = Policy()
     agent.load()
 
     env = gym.make('CarRacing-v2', continuous=agent.continuous)
+    env = FrameStack(env, agent.stack_size)
     if render:
         env = gym.make('CarRacing-v2', continuous=agent.continuous, render_mode='human')
+        env = FrameStack(env, agent.stack_size)
         
     rewards = []
     for episode in range(n_episodes):
